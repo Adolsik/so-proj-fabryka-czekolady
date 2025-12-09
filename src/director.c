@@ -1,97 +1,113 @@
-#include "common/common.h" // Zawiera definicje stałych
-#include <unistd.h>      // fork(), exec(), getpid()
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>   
-#include <errno.h>
-
-#include <sys/sem.h>
-#include <sys/wait.h>   // waitpid()
+#include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/sem.h>
 #include <sys/msg.h>
+#include <unistd.h>
+#include "common/shared.h"
 
-void cleanup_ipc(int shmid, int semid, int msgid) {
-    printf("[Dyrektor %d] Czyszczenie struktur IPC...\n", getpid());
-    
-    ///TODO
-
-    printf("[Dyrektor %d] Czyszczenie zakończone.\n", getpid());
-}
+// Do semaforów użyjemy unii dla starszych systemów, ale nowoczesne POSIX jej nie wymagają.
+// Dla System V IPC (shmget, semget, msgget) jest to standardowe podejście:
+union semun {
+    int val;
+    struct semid_ds *buf;
+    unsigned short *array;
+    struct seminfo *__buf;
+};
 
 int main(int argc, char *argv[]) {
-    // walidacja argumentów TODO
 
-    // 1. Pamięć Dzielona (Magazyn)
-    key_t shm_key = ftok(".", 10);
-    int shmid = shmget(shm_key, sizeof(WarehouseState), IPC_CREAT | 0600);
-    //if (shmid == -1) handle_sys_error("shmget failed");
+    int N = 100; // Domyślna pojemność magazynu
 
-    // 2. Zestaw Semaforów (Synchronizacja)
-    key_t sem_key = ftok(".", 11);
-    int semid = semget(sem_key, NUM_SEMS, IPC_CREAT | 0600);
-    //if (semid == -1) handle_sys_error("semget failed");
-
-    // 3. Kolejka Komunikatów (Sterowanie)
-    key_t msg_key = ftok(".", 12);
-    int msgid = msgget(msg_key, IPC_CREAT | 0600);
-    //if (msgid == -1) handle_sys_error("msgget failed");
-
-    // 4. Dołączenie do SHM i inicjalizacja stanu (tylko Dyrektor)
-    WarehouseState *wh = (WarehouseState *)shmat(shmid, NULL, 0);
-    //if (wh == (void *)-1) handle_sys_error("shmat failed");
-    
-    // Wyzerowanie magazynu na start
-    memset(wh->inventory, 0, sizeof(wh->inventory));
-    wh->current_load = 0;
-    
-    //if (shmdt(wh) == -1) handle_sys_error("shmdt failed");
-
-    unsigned short init_sem_values[NUM_SEMS] = {
-        1,                    // MUTEX_SEM: Początkowo wolny (1)
-        MAX_CAPACITY_N,       // EMPTY_SEM: Początkowo jest N wolnych jednostek
-        0, 0, 0, 0            // FULL_A/B/C/D_SEM: Początkowo puste (0)
-    };
-
-    // Wymagana jest unia do inicjalizacji semaforów
-    union semun su;
-    su.array = init_sem_values;
-    
-    // if (semctl(semid, 0, SETALL, su) == -1) handle_sys_error("semctl SETALL failed");
-
-    pid_t pid;
-    
-    // Uruchomienie 4 Dostawców (A, B, C, D)
-    for (int i = 0; i < NUM_INGREDIENTS; i++) {
-        if ((pid = fork()) == 0) {
-            char ingredient_index_str[2];
-            sprintf(ingredient_index_str, "%d", i);
-            
-            // execv wymaga tablicy argumentów
-            char *args[] = {"./supplier", ingredient_index_str, NULL};
-            execv(args[0], args);
-            // Jeśli execv się nie powiedzie, zwróć błąd
-            //handle_sys_error("execv supplier failed");
-        }
+    // Tworzenie Pamięci Dzielonej
+    int shmid = shmget(KEY_SHM, sizeof(WarehouseState), IPC_CREAT | 0600);
+    if (shmid == -1) {
+        perror("Wystapil blad przy tworzeniu pamieci dzielonej");
+        exit(EXIT_FAILURE);
+    }
+    WarehouseState *shm_ptr = (WarehouseState *)shmat(shmid, NULL, 0);
+    if (shm_ptr == (void *)-1) {
+        perror("Wystapil blad przy dolaczaniu pamieci dzielonej");
+        exit(EXIT_FAILURE);
     }
 
-    // Uruchomienie 2 Pracowników (Stanowisko 1 i 2)
-    for (int i = 1; i <= 2; i++) {
-        if ((pid = fork()) == 0) {
-            char station_id_str[2];
-            sprintf(station_id_str, "%d", i);
-
-            char *args[] = {"./worker", station_id_str, NULL};
-            execv(args[0], args);
-           // handle_sys_error("execv worker failed");
-        }
+    // Inicjalizacja stanu magazynu. Na poczatku jest pusty. Później dane bedą aktualizowane z pliku.
+    shm_ptr->capacity_N = N;
+    shm_ptr->occupied_units = 0;
+    for (int i = 0; i < MAX_COMPONENTS; i++) {
+        shm_ptr->count[i] = 0;
     }
 
-    // Oczekiwanie na zakończenie wszystkich procesów potomnych
-    while (wait(NULL) > 0);
+    // Tworzenie Zestawu Semaforów
+    // Semafor 0: Muteks (blokada dostępu do pamięci dzielonej)
+    // Semafor 1-4: Warunki (np. "czy jest miejsce w magazynie", "czy jest składnik A")
+    // Użyjmy tylko jednego semafora (indeks 0) jako Muteks:
+    int semid = semget(KEY_SEM, 1, 0600 | IPC_CREAT);
+    if (semid == -1) {
+        perror("Wystapil blad przy tworzeniu semafora");
+        exit(EXIT_FAILURE);
+    }
 
-    // Czyszczenie zasobów IPC przed zakończeniem
-    cleanup_ipc(shmid, semid, msgid);
+    // Inicjalizacja muteksa na 1 (wolny)
+    union semun arg;
+    arg.val = 1;
+    if (semctl(semid, 0, SETVAL, arg) == -1) {
+        perror("Wystapil blad przy inicjalizacji semafora");
+        exit(EXIT_FAILURE);
+    }
+
+    // Tworzenie Kolejki Komunikatów
+    int msqid = msgget(KEY_MSG, 0600 | IPC_CREAT);
+    if (msqid == -1) {
+        perror("Wystapil blad przy tworzeniu kolejki komunikatow");
+        exit(EXIT_FAILURE);
+    }
+    
+    printf("Dyrektor: IPC inicjalizowane (shmid: %d, semid: %d, msqid: %d)\n", shmid, semid, msqid);
+
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        perror("fork error");
+        // ... obsługa błędu ...
+    } else if (pid == 0) {
+        // Proces potomny (np. Dostawca A)
+        // Parametry: (ID procesu, typ komponentu, klucz SHM, klucz SEM, klucz MSG)
+        char *args[] = {"./supplier", "0", "0", NULL}; // Dostawca A, indeks 0
+        if (execv(args[0], args) == -1) {
+            perror("execv supplier error");
+            exit(EXIT_FAILURE);
+        }
+    } else {
+        // Proces macierzysty (Dyrektor) kontynuuje
+    }
+
+    //  Uruchomienie Procesów (Dostawcy, Magazyn, Pracownicy) TODO
+    
+    //  Wysyłanie Poleceń TODO
+
+    // Sprzątanie TODO
 
     return 0;
+}
+
+// Funkcja pomocnicza do operacji na semaforach (P - czekaj, V - zwolnij)
+// Używana przez WSZYSTKIE procesy do ochrony dostępu do Pamięci Dzielonej
+struct sembuf sem_P = {0, -1, 0}; // Czekaj na semafor 0 (Muteks)
+struct sembuf sem_V = {0, 1, 0};  // Zwolnij semafor 0 (Muteks)
+
+void acquire_mutex(int semid) {
+    if (semop(semid, &sem_P, 1) == -1) {
+        perror("semop P error");
+        // Obsługa błędu
+    }
+}
+
+void release_mutex(int semid) {
+    if (semop(semid, &sem_V, 1) == -1) {
+        perror("semop V error");
+        // Obsługa błędu
+    }
 }
