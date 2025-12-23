@@ -49,9 +49,13 @@ int main(int argc, char *argv[]) {
            name, 'A' + component_type, size);
 
     while (keep_running) {
-        // Symulacja losowego czasu dostawy (1-4 sekundy)
-        sleep(rand() % 4 + 1);
-
+        // Różnicowanie czasu dostawy aby uniknąć zakleszczeń i poprawic process starvation
+        // Takie ustawienie czasowe skutkuje tym, że żaden ze składników nie odkłada sie w magazynie
+        if (component_type < 2) {
+            usleep(500000 + (rand() % 1000000)); // Dostawy A, B co 0.5-1.5s
+        } else {
+            sleep(2 + (rand() % 2));              // Dostawy C, D co 2-3 sekundy
+        }
         // --- WEJŚCIE DO SEKCJI KRYTYCZNEJ ---
         if (semop(semid, &lock_storage, 1) == -1) {
             if (errno == EINTR) continue; // Przerwano sygnałem, sprawdź warunek pętli
