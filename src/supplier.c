@@ -1,62 +1,82 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
-#include "common/shared.h"
+#include <signal.h>
+#include <unistd.h>
+#include <errno.h>
+#include <time.h>
+#include "shared.h"
 
-struct sembuf sem_P = {0, -1, 0}; // Czekaj na semafor 0 (Muteks)
-struct sembuf sem_V = {0, 1, 0};  // Zwolnij semafor 0 (Muteks)
+// Zmienna sygnalizująca koniec pracy
+volatile sig_atomic_t keep_running = 1;
 
-void acquire_mutex(int semid) {
-    if (semop(semid, &sem_P, 1) == -1) {
-        perror("semop P error");
-        // Obsługa błędu...
-    }
+// Obsługa sygnałów od Dyrektora
+void signal_handler(int sig) {
+    keep_running = 0;
 }
 
-void release_mutex(int semid) {
-    if (semop(semid, &sem_V, 1) == -1) {
-        perror("semop V error");
-        // Obsługa błędu...
+// Struktury dla operacji na semaforach (zdefiniowane globalnie dla wygody)
+struct sembuf lock_storage = {0, -1, 0}; // P: Czekaj/Zablokuj
+struct sembuf unlock_storage = {0, 1, 0}; // V: Zwolnij
+
+int main(int argc, char *argv[]) {
+    if (argc < 3) {
+        fprintf(stderr, "Błąd: Brak argumentów (typ i nazwa).\n");
+        exit(EXIT_FAILURE);
     }
-}
 
-void supplier_process(enum Component component_type, int supplier_id) {
-    // Dostęp do IPC
-    int shmid = shmget(KEY_SHM, sizeof(WarehouseState), 0); // 0 bo już istnieje
-    // ... obsługa błędu ...
-    WarehouseState *shm_ptr = (WarehouseState *)shmat(shmid, NULL, 0);
-    // ... obsługa błędu ...
-    int semid = semget(KEY_SEM, 1, 0); // 0 bo już istnieje
-    // ... obsługa błędu ...
+    int component_type = atoi(argv[1]); // 0=A, 1=B, 2=C, 3=D
+    char *name = argv[2];
+    int size = component_size[component_type];
 
-    int size_to_add = component_size[component_type];
+    // Rejestracja sygnałów
+    signal(SIGUSR1, signal_handler); // Polecenie 3
+    signal(SIGTERM, signal_handler); // Polecenie 4
 
-    while (1) {
-        sleep(rand() % 3 + 1); // Czekaj 1-3 sekundy
+    // Podłączenie do IPC (Pamięć i Semafory)
+    int shmid = shmget(KEY_SHM, sizeof(WarehouseState), 0600);
+    if (shmid == -1) { perror("Dostawca shmget"); exit(1); }
+    WarehouseState *magazyn = (WarehouseState *)shmat(shmid, NULL, 0);
 
-        acquire_mutex(semid);
+    int semid = semget(KEY_SEM, 1, 0600);
+    if (semid == -1) { perror("Dostawca semget"); exit(1); }
 
-        if (shm_ptr->occupied_units + size_to_add <= shm_ptr->capacity_N) {
-            // Dodawanie składnika
-            shm_ptr->occupied_units += size_to_add;
-            shm_ptr->count[component_type]++;
+    srand(time(NULL) ^ getpid()); // Inicjalizacja losowości dostaw
 
-            printf("Dostawca %d (Składnik %c): Dostarczył. Magazyn: %d/%d\n", 
-                   supplier_id, 'A' + component_type, 
-                   shm_ptr->occupied_units, shm_ptr->capacity_N);
-            // Zapis do pliku raportu TODO
-        } else {
-            printf("Dostawca %d (Składnik %c): Magazyn pełny. Czekam...\n", 
-                   supplier_id, 'A' + component_type);
-            // Zapis do pliku raportu TODO
+    printf("[%s] Rozpoczynam pracę. Dostarczam składnik %c (rozmiar %d)\n", 
+           name, 'A' + component_type, size);
+
+    while (keep_running) {
+        // Symulacja losowego czasu dostawy (1-4 sekundy)
+        sleep(rand() % 4 + 1);
+
+        // --- WEJŚCIE DO SEKCJI KRYTYCZNEJ ---
+        if (semop(semid, &lock_storage, 1) == -1) {
+            if (errno == EINTR) continue; // Przerwano sygnałem, sprawdź warunek pętli
+            perror("semop lock error"); break;
         }
 
-        release_mutex(semid);
-        
-        // Tutaj sprawdzenie, czy Dyrektor wysłał polecenie_3 (przez Kolejkę Komunikatów)
+        // Sprawdzenie miejsca w magazynie
+        if (magazyn->occupied_units + size <= magazyn->capacity_N) {
+            magazyn->occupied_units += size;
+            magazyn->count[component_type]++;
+            
+            printf("[%s] Dostarczono. Magazyn: %d/%d (A:%d B:%d C:%d D:%d)\n",
+                   name, magazyn->occupied_units, magazyn->capacity_N,
+                   magazyn->count[0], magazyn->count[1], magazyn->count[2], magazyn->count[3]);
+        } else {
+            printf("[%s] Magazyn pełny! Oczekiwanie...\n", name);
+        }
+
+        // --- WYJŚCIE Z SEKCJI KRYTYCZNEJ ---
+        semop(semid, &unlock_storage, 1);
     }
 
-    // ... sprzątanie shmdt ...
+    // Odłączenie od pamięci dzielonej przed końcem
+    shmdt(magazyn);
+    printf("[%s] Kończę pracę i opuszczam magazyn.\n", name);
+
+    return 0;
 }

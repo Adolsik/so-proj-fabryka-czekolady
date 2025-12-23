@@ -24,6 +24,6 @@ typedef struct {
 } DirectorCommand;
 
 // Jednostki zajmowane przez składniki
-const int component_size[] = {1, 1, 2, 3}; // A=1, B=1, C=2, D=3
+static const int component_size[] = {1, 1, 2, 3}; // A=1, B=1, C=2, D=3
 
 #endif 
