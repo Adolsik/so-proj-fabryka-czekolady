@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
         // Różnicowanie czasu dostawy aby uniknąć zakleszczeń i poprawic process starvation
         // Takie ustawienie czasowe skutkuje tym, że żaden ze składników nie odkłada sie w magazynie
         if (component_type < 2) {
-            usleep(500000 + (rand() % 1000000)); // Dostawy A, B co 0.5-1.5s
+            usleep(1000000 + (rand() % 1000000)); // Dostawy A, B co 1-1.5s
         } else {
             sleep(2 + (rand() % 2));              // Dostawy C, D co 2-3 sekundy
         }

@@ -17,6 +17,7 @@ typedef struct {
     pid_t workers[2];
 } FactoryPIDs;
 
+// Funkcja czyszcząca zasoby IPC
 void cleanup(int shmid, int semid, int msqid) {
     shmctl(shmid, IPC_RMID, NULL);
     semctl(semid, 0, IPC_RMID);
@@ -24,6 +25,7 @@ void cleanup(int shmid, int semid, int msqid) {
     printf("\n[Dyrektor] Zasoby IPC usunięte z systemu.\n");
 }
 
+// Zapisywanie i odtwarzanie stanu magazynu
 void save_state(WarehouseState *state) {
     FILE *f = fopen(STATE_FILE, "wb");
     if (f) {
@@ -44,18 +46,31 @@ void load_state(WarehouseState *state) {
 
 int main() {
     int N;
-    printf("Podaj pojemność magazynu N: ");
-    if (scanf("%d", &N) != 1) exit(1);
 
-    // 1. Inicjalizacja IPC (Shared Memory, Semaphores)
+    // Inicjalizacja IPC (Shared Memory, Semaphores)
     int shmid = shmget(KEY_SHM, sizeof(WarehouseState), IPC_CREAT | 0600);
     WarehouseState *shm_ptr = (WarehouseState *)shmat(shmid, NULL, 0);
     
-    // Inicjalizacja stanu
-    shm_ptr->capacity_N = N;
-    shm_ptr->occupied_units = 0;
-    for(int i=0; i<4; i++) shm_ptr->count[i] = 0;
-    load_state(shm_ptr); // Odtwórz jeśli plik istnieje
+    if (access(STATE_FILE, F_OK) == 0) {
+        printf("[Dyrektor] Znaleziono zapisany stan magazynu. Wczytuję dane...\n");
+        load_state(shm_ptr);
+        N = shm_ptr->capacity_N; 
+        printf("[Dyrektor] Pojemność odtworzona z pliku: %d\n", N);
+    } else {
+        printf("[Dyrektor] Brak zapisanego stanu. Podaj pojemność magazynu N: ");
+        if (scanf("%d", &N) != 1 || N <= 0) {
+            fprintf(stderr, "Błąd: N musi być liczbą dodatnią.\n");
+            exit(EXIT_FAILURE);
+        }
+        
+        // Inicjalizacja nowej struktury
+        shm_ptr->capacity_N = N;
+        shm_ptr->occupied_units = 0;
+        for (int i = 0; i < MAX_COMPONENTS; i++) {
+            shm_ptr->count[i] = 0;
+        }
+        printf("[Dyrektor] Zainicjalizowano nowy magazyn o pojemności: %d\n", N);
+    }
 
     int semid = semget(KEY_SEM, 1, IPC_CREAT | 0600);
     semctl(semid, 0, SETVAL, 1);
@@ -64,7 +79,7 @@ int main() {
 
     FactoryPIDs factory;
 
-    // 2. Uruchamianie 4 Dostawców
+    // Uruchamianie 4 Dostawców
     for (int i = 0; i < 4; i++) {
         pid_t p = fork();
         if (p == 0) {
@@ -78,7 +93,7 @@ int main() {
         }
     }
 
-    // 3. Uruchamianie 2 Pracowników
+    // Uruchamianie 2 Pracowników
     for (int i = 0; i < 2; i++) {
         pid_t p = fork();
         if (p == 0) {
@@ -91,17 +106,24 @@ int main() {
         }
     }
 
-    
-
-    // 4. Menu Dyrektora (Sygnały Linuxowe)
+    // Menu Dyrektora 
     int cmd = 0;
     while (cmd != 4) {
-        printf("\nPOLECENIA DYREKTORA:\n1: Stop Pracownicy\n2: Stop Magazyn\n3: Stop Dostawcy\n4: Stop Wszystko i Zapisz\nWybor: ");
+        printf("\nPOLECENIA DYREKTORA:\n1: Stop Pracownicy\n2: Stop Magazyn\n3: Stop Dostawcy\n4: Stop Wszystko \nWybor: ");
         scanf("%d", &cmd);
 
         switch(cmd) {
             case 1: // Stop Fabryka (Pracownicy)
                 for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
+                break;
+            case 2:
+                printf("[Dyrektor] Zamykam dostęp do magazynu (Blokada semafora)...\n");
+                // Wszystkie procesy, które spróbują wejść do magazynu, zawisną na semaforze.
+                struct sembuf lock_magazyn = {0, -1, 0};
+                if (semop(semid, &lock_magazyn, 1) == -1) {
+                    perror("Błąd blokowania magazynu");
+                }
+                printf("[Dyrektor] Magazyn został zablokowany. Procesy czekają...\n");
                 break;
             case 3: // Stop Dostawcy
                 for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR1);
@@ -109,12 +131,12 @@ int main() {
             case 4: // Stop Wszystko
                 for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGTERM);
                 for(int i=0; i<2; i++) kill(factory.workers[i], SIGTERM);
-                save_state(shm_ptr);
                 break;
         }
+        save_state(shm_ptr);
     }
 
-    // Czekanie na zakończenie wszystkich dzieci
+    // Czekanie na zakończenie wszystkich dzieci i sprzątanie (zombie itp)
     while(wait(NULL) > 0);
 
     cleanup(shmid, semid, msqid);
