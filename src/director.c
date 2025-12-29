@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include "shared.h"
+#include <errno.h>
 
 #define STATE_FILE "magazyn.dat"
 
@@ -20,14 +21,20 @@ typedef struct {
 // Funkcja czyszcząca zasoby IPC
 void cleanup(int shmid, int semid, int msqid) {
     shmctl(shmid, IPC_RMID, NULL);
+    if (shmctl(shmid, IPC_RMID, NULL) == -1 && errno != EINVAL) perror("cleanup: shmctl error");
     semctl(semid, 0, IPC_RMID);
+    if (semctl(semid, 0, IPC_RMID) == -1 && errno != EINVAL) perror("cleanup: semctl error");
     msgctl(msqid, IPC_RMID, NULL);
+    if (msgctl(msqid, IPC_RMID, NULL) == -1 && errno != EINVAL) perror("cleanup: msgctl error");
     printf("\n[Dyrektor] Zasoby IPC usunięte z systemu.\n");
 }
 
 // Zapisywanie i odtwarzanie stanu magazynu
 void save_state(WarehouseState *state) {
     FILE *f = fopen(STATE_FILE, "wb");
+    if (f == NULL) {
+        perror("[Dyrektor] fopen (save_state) error");
+    }
     if (f) {
         fwrite(state, sizeof(WarehouseState), 1, f);
         fclose(f);
@@ -37,6 +44,9 @@ void save_state(WarehouseState *state) {
 
 void load_state(WarehouseState *state) {
     FILE *f = fopen(STATE_FILE, "rb");
+    if (f == NULL) {
+        perror("[Dyrektor] fopen (load_state) error");
+    }
     if (f) {
         fread(state, sizeof(WarehouseState), 1, f);
         fclose(f);
@@ -49,7 +59,15 @@ int main() {
 
     // Inicjalizacja IPC (Shared Memory, Semaphores)
     int shmid = shmget(KEY_SHM, sizeof(WarehouseState), IPC_CREAT | 0600);
+        if (shmid == -1) {
+        perror("[Dyrektor] shmget error");
+        exit(EXIT_FAILURE);
+    }
     WarehouseState *shm_ptr = (WarehouseState *)shmat(shmid, NULL, 0);
+        if (shm_ptr == (void *)-1) {
+        perror("[Dyrektor] shmat error");
+        exit(EXIT_FAILURE);
+    }
     
     if (access(STATE_FILE, F_OK) == 0) {
         printf("[Dyrektor] Znaleziono zapisany stan magazynu. Wczytuję dane...\n");
@@ -73,7 +91,16 @@ int main() {
     }
 
     int semid = semget(KEY_SEM, 1, IPC_CREAT | 0600);
+    if (semid == -1) {
+        perror("[Dyrektor] semget error");
+        exit(EXIT_FAILURE);
+    }
+
     semctl(semid, 0, SETVAL, 1);
+    if (semctl(semid, 0, SETVAL, 1) == -1) {
+        perror("[Dyrektor] semctl (SETVAL) error");
+        exit(EXIT_FAILURE);
+    }
 
     int msqid = msgget(KEY_MSG, IPC_CREAT | 0600);
 
@@ -82,24 +109,40 @@ int main() {
     // Uruchamianie 4 Dostawców
     for (int i = 0; i < 4; i++) {
         pid_t p = fork();
-        if (p == 0) {
+        if (p == -1) {
+            perror("[Dyrektor] fork error");
+            exit(EXIT_FAILURE);
+        }
+        else if (p == 0) {
             char type[2], name[20];
             sprintf(type, "%d", i);
             sprintf(name, "Dostawca_%c", 'A' + i);
             execl("./supplier", "./supplier", type, name, NULL);
+            if (execl("./supplier", "./supplier", type, name, NULL) == -1) {
+                perror("[Dyrektor] execl error");
+                exit(EXIT_FAILURE);
+            }
             exit(1);
         } else {
             factory.suppliers[i] = p;
-        }
+        } 
     }
 
     // Uruchamianie 2 Pracowników
     for (int i = 0; i < 2; i++) {
         pid_t p = fork();
-        if (p == 0) {
+        if (p == -1) {
+            perror("[Dyrektor] fork error");
+            exit(EXIT_FAILURE);
+        }
+        else if (p == 0) {
             char type[2];
             sprintf(type, "%d", i + 1);
             execl("./worker", "./worker", type, NULL);
+            if (execl("./worker", "./worker", type, NULL) == -1) {
+                perror("[Dyrektor] execl error");
+                exit(EXIT_FAILURE);
+            }
             exit(1);
         } else {
             factory.workers[i] = p;

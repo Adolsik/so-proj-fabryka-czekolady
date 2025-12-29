@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <time.h>
 #include "shared.h"
+#include <errno.h>
 
 // Zmienna sterująca pętlą (obsługa sygnałów)
 volatile sig_atomic_t keep_working = 1;
@@ -52,7 +53,7 @@ int main(int argc, char *argv[]) {
         // --- WEJŚCIE DO SEKCJI KRYTYCZNEJ (dostęp atomowy) ---
         if (semop(semid, &lock_storage, 1) == -1) {
             if (errno == EINTR) continue;
-            perror("semop lock error"); break;
+            perror("[Pracownik] semop lock error"); break;
         }
 
         int can_produce = 0;
@@ -89,6 +90,10 @@ int main(int argc, char *argv[]) {
 
         // --- WYJŚCIE Z SEKCJI KRYTYCZNEJ ---
         semop(semid, &unlock_storage, 1);
+        if (semop(semid, &unlock_storage, 1) == -1) {
+            perror("Pracownik: semop unlock");
+            break;
+        }
     }
 
     shmdt(magazyn);

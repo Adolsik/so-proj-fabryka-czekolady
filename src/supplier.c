@@ -76,6 +76,10 @@ int main(int argc, char *argv[]) {
 
         // --- WYJŚCIE Z SEKCJI KRYTYCZNEJ ---
         semop(semid, &unlock_storage, 1);
+        if (semop(semid, &unlock_storage, 1) == -1) {
+            perror("Dostawca: semop unlock error");
+        break;
+    }
     }
 
     // Odłączenie od pamięci dzielonej przed końcem
