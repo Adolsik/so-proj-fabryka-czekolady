@@ -85,6 +85,9 @@ int main(int argc, char *argv[]) {
             magazyn->occupied_units -= total_size_to_free;
             printf("[Pracownik %d] WYPRODUKOWANO CZEKOLADĘ! Wolne miejsce: %d/%d\n", 
                    worker_type, magazyn->capacity_N - magazyn->occupied_units, magazyn->capacity_N);
+            char buf[100];
+            sprintf(buf, "Wyprodukowano czekolade typu %d. Wolne miejsce: %d", worker_type, magazyn->capacity_N - magazyn->occupied_units);
+            log_event((worker_type == 1 ? "Pracownik_1" : "Pracownik_2"), buf);
         } else {
              printf("[Pracownik %d] Brak surowców. Czekam...\n", worker_type);
         }

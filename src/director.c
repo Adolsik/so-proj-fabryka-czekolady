@@ -131,34 +131,39 @@ int main() {
     // Menu Dyrektora 
     int cmd = 0;
     while (cmd != 5) {
-        printf("\nPOLECENIA DYREKTORA:\n1: Stop Pracownicy\n2: Stop Magazyn\n3: Stop Dostawcy\n4: Stop Pracownicy i Magazyn\n5: Wyjście\nWybor: ");
+        printf("\nPOLECENIA DYREKTORA:\n1: Stop Pracownicy\n2: Stop Magazyn\n3: Stop Dostawcy\n4: Stop Pracownicy i Magazyn\n5: Wyjście i zapis\nWybor: ");
         scanf("%d", &cmd);
 
         switch(cmd) {
             case 1: // Stop Fabryka (Pracownicy)
                 for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
                 printf("[Dyrektor] Fabryka przestaje pracować.\n");
+                log_event("DYREKTOR", "Zatrzymano pracę fabryki (Polecenie 1)");
                 break;
             case 2: // Stop Magazyn
                 shm_ptr->is_open = 0;
                 semctl(semid, 0, SETVAL, 0);
                 printf("[Dyrektor] Magazyn został zablokowany. Procesy czekają...\n");
+                log_event("DYREKTOR", "Zablokowano dostep do magazynu (Polecenie 2)");
                 break;
             case 3: // Stop Dostawcy
                 for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR2);
                 printf("[Dyrektor] Dostawcy przestają dostarczać składniki.\n");
+                log_event("DYREKTOR", "Zatrzymano dostawców (Polecenie 3)");
                 break;
             case 4: // Stop Fabryka, Magazyn
                 for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
                 shm_ptr->is_open = 0;
                 semctl(semid, 0, SETVAL, 0);
                 printf("[Dyrektor] Fabryka i Magazyn przestaje pracować.\n");
+                log_event("DYREKTOR", "Zablokowano pracę fabryki i dostęp do magazynu (Polecenie 4)");
                 break;
             case 5: // Wyjście
                 for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
                 for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR2);
                 sleep(1); // Czekaj na zakończenie procesów
                 save_state(shm_ptr);
+                log_event("DYREKTOR", "Zapisano stan magazynu i zakończono działanie programu");
                 break;
         }
     }

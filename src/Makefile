@@ -16,4 +16,4 @@ worker: worker.c $(HEADER)
 	$(CC) $(CFLAGS) worker.c -o worker
 
 clean:
-	rm -f director supplier worker
+	rm -f director supplier worker magazyn.dat fabryka_raport.txt

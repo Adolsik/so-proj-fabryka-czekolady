@@ -73,6 +73,9 @@ int main(int argc, char *argv[]) {
             printf("[%s] Dostarczono. Magazyn: %d/%d (A:%d B:%d C:%d D:%d)\n",
                    name, magazyn->occupied_units, magazyn->capacity_N,
                    magazyn->count[0], magazyn->count[1], magazyn->count[2], magazyn->count[3]);
+            char buf[100];
+            sprintf(buf, "Dostarczono skladnik %c. Stan: %d/%d", 'A' + component_type, magazyn->occupied_units, magazyn->capacity_N);
+            log_event(name, buf);
         } else {
             printf("[%s] Magazyn pełny! Oczekiwanie...\n", name);
         }
