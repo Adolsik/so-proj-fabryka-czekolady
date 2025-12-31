@@ -14,16 +14,11 @@ typedef struct {
     int capacity_N; // Całkowita pojemność N
     int occupied_units; // Aktualnie zajęte jednostki
     int count[MAX_COMPONENTS]; // Liczba sztuk składników A, B, C, D
+    int is_open; // Flaga czy magazyn jest otwarty (Polecenie zamknięcia magazynu)
 } WarehouseState;
-
-// Struktura Komunikatu (dla Dyrektora)
-// Typ komunikatu 1: Polecenia sterujące
-typedef struct {
-    long mtype; // 1
-    int command; // 1, 2, 3, lub 4 (Polecenia Dyrektora)
-} DirectorCommand;
 
 // Jednostki zajmowane przez składniki
 static const int component_size[] = {1, 1, 2, 3}; // A=1, B=1, C=2, D=3
+
 
 #endif 

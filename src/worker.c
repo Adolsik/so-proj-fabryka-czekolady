@@ -29,9 +29,8 @@ int main(int argc, char *argv[]) {
 
     int worker_type = atoi(argv[1]); // 1 lub 2
     
-    // Rejestracja sygnałów (SIGUSR1 - Stop Fabryka, SIGTERM - Stop Wszystko)
+    // Rejestracja sygnałów Polecenie stop Pracownik
     signal(SIGUSR1, signal_handler);
-    signal(SIGTERM, signal_handler);
 
     // Podłączenie do IPC
     int shmid = shmget(KEY_SHM, sizeof(WarehouseState), 0600);
@@ -44,7 +43,9 @@ int main(int argc, char *argv[]) {
     printf("[Pracownik %d] Rozpoczynam linię produkcyjną typu %d.\n", worker_type, worker_type);
 
     while (keep_working) {
-        // Czas potrzebny na przygotowanie do produkcji
+         if (!magazyn->is_open) {
+            sleep(1); continue; // Magazyn zamknięty proces czeka
+        }
 
         // Czekaj od 1 do 3 sekund losowo przed każdą próbą (process starvation)
         sleep(1);

@@ -19,40 +19,17 @@ typedef struct {
 } FactoryPIDs;
 
 // Funkcja czyszcząca zasoby IPC
-void cleanup(int shmid, int semid, int msqid) {
-    shmctl(shmid, IPC_RMID, NULL);
-    if (shmctl(shmid, IPC_RMID, NULL) == -1 && errno != EINVAL) perror("cleanup: shmctl error");
-    semctl(semid, 0, IPC_RMID);
-    if (semctl(semid, 0, IPC_RMID) == -1 && errno != EINVAL) perror("cleanup: semctl error");
-    msgctl(msqid, IPC_RMID, NULL);
-    if (msgctl(msqid, IPC_RMID, NULL) == -1 && errno != EINVAL) perror("cleanup: msgctl error");
-    printf("\n[Dyrektor] Zasoby IPC usunięte z systemu.\n");
-}
+void cleanup(int shmid, int semid, int msqid);
 
-// Zapisywanie i odtwarzanie stanu magazynu
-void save_state(WarehouseState *state) {
-    FILE *f = fopen(STATE_FILE, "wb");
-    if (f == NULL) {
-        perror("[Dyrektor] fopen (save_state) error");
-    }
-    if (f) {
-        fwrite(state, sizeof(WarehouseState), 1, f);
-        fclose(f);
-        printf("[Dyrektor] Stan magazynu zapisany do pliku.\n");
-    }
-}
+// Funkcja zamykająca dostęp do magazynu
+void close_warehouse_access(int semid);
+   
+// Zapisywanie stanu magazynu
+void save_state(WarehouseState *state);
 
-void load_state(WarehouseState *state) {
-    FILE *f = fopen(STATE_FILE, "rb");
-    if (f == NULL) {
-        perror("[Dyrektor] fopen (load_state) error");
-    }
-    if (f) {
-        fread(state, sizeof(WarehouseState), 1, f);
-        fclose(f);
-        printf("[Dyrektor] Stan magazynu odtworzony z pliku.\n");
-    }
-}
+// Wczytywanie stanu magazynu
+void load_state(WarehouseState *state);
+  
 
 int main() {
     int N;
@@ -89,6 +66,8 @@ int main() {
         }
         printf("[Dyrektor] Zainicjalizowano nowy magazyn o pojemności: %d\n", N);
     }
+
+    shm_ptr->is_open = 1; // Magazyn jest otwarty na start
 
     int semid = semget(KEY_SEM, 1, IPC_CREAT | 0600);
     if (semid == -1) {
@@ -151,32 +130,37 @@ int main() {
 
     // Menu Dyrektora 
     int cmd = 0;
-    while (cmd != 4) {
-        printf("\nPOLECENIA DYREKTORA:\n1: Stop Pracownicy\n2: Stop Magazyn\n3: Stop Dostawcy\n4: Stop Wszystko \nWybor: ");
+    while (cmd != 5) {
+        printf("\nPOLECENIA DYREKTORA:\n1: Stop Pracownicy\n2: Stop Magazyn\n3: Stop Dostawcy\n4: Stop Pracownicy i Magazyn\n5: Wyjście\nWybor: ");
         scanf("%d", &cmd);
 
         switch(cmd) {
             case 1: // Stop Fabryka (Pracownicy)
                 for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
+                printf("[Dyrektor] Fabryka przestaje pracować.\n");
                 break;
-            case 2:
-                printf("[Dyrektor] Zamykam dostęp do magazynu (Blokada semafora)...\n");
-                // Wszystkie procesy, które spróbują wejść do magazynu, zawisną na semaforze.
-                struct sembuf lock_magazyn = {0, -1, 0};
-                if (semop(semid, &lock_magazyn, 1) == -1) {
-                    perror("Błąd blokowania magazynu");
-                }
+            case 2: // Stop Magazyn
+                shm_ptr->is_open = 0;
+                semctl(semid, 0, SETVAL, 0);
                 printf("[Dyrektor] Magazyn został zablokowany. Procesy czekają...\n");
                 break;
             case 3: // Stop Dostawcy
-                for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR1);
+                for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR2);
+                printf("[Dyrektor] Dostawcy przestają dostarczać składniki.\n");
                 break;
-            case 4: // Stop Wszystko
-                for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGTERM);
-                for(int i=0; i<2; i++) kill(factory.workers[i], SIGTERM);
+            case 4: // Stop Fabryka, Magazyn
+                for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
+                shm_ptr->is_open = 0;
+                semctl(semid, 0, SETVAL, 0);
+                printf("[Dyrektor] Fabryka i Magazyn przestaje pracować.\n");
+                break;
+            case 5: // Wyjście
+                for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
+                for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR2);
+                sleep(1); // Czekaj na zakończenie procesów
+                save_state(shm_ptr);
                 break;
         }
-        save_state(shm_ptr);
     }
 
     // Czekanie na zakończenie wszystkich dzieci i sprzątanie (zombie itp)
@@ -184,4 +168,38 @@ int main() {
 
     cleanup(shmid, semid, msqid);
     return 0;
+}
+
+void cleanup(int shmid, int semid, int msqid) {
+    shmctl(shmid, IPC_RMID, NULL);
+    if (shmctl(shmid, IPC_RMID, NULL) == -1 && errno != EINVAL) perror("cleanup: shmctl error");
+    semctl(semid, 0, IPC_RMID);
+    if (semctl(semid, 0, IPC_RMID) == -1 && errno != EINVAL) perror("cleanup: semctl error");
+    msgctl(msqid, IPC_RMID, NULL);
+    if (msgctl(msqid, IPC_RMID, NULL) == -1 && errno != EINVAL) perror("cleanup: msgctl error");
+    printf("\n[Dyrektor] Zasoby IPC usunięte z systemu.\n");
+}
+
+void save_state(WarehouseState *state) {
+    FILE *f = fopen(STATE_FILE, "wb");
+    if (f == NULL) {
+        perror("[Dyrektor] fopen (save_state) error");
+    }
+    if (f) {
+        fwrite(state, sizeof(WarehouseState), 1, f);
+        fclose(f);
+        printf("[Dyrektor] Stan magazynu zapisany do pliku.\n");
+    }
+}
+
+void load_state(WarehouseState *state) {
+    FILE *f = fopen(STATE_FILE, "rb");
+    if (f == NULL) {
+        perror("[Dyrektor] fopen (load_state) error");
+    }
+    if (f) {
+        fread(state, sizeof(WarehouseState), 1, f);
+        fclose(f);
+        printf("[Dyrektor] Stan magazynu odtworzony z pliku.\n");
+    }
 }

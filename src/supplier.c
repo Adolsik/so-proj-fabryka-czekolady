@@ -32,8 +32,7 @@ int main(int argc, char *argv[]) {
     int size = component_size[component_type];
 
     // Rejestracja sygnałów
-    signal(SIGUSR1, signal_handler); // Polecenie 3
-    signal(SIGTERM, signal_handler); // Polecenie 4
+    signal(SIGUSR2, signal_handler); // Polecenie Stop Dostawca
 
     // Podłączenie do IPC (Pamięć i Semafory)
     int shmid = shmget(KEY_SHM, sizeof(WarehouseState), 0600);
@@ -49,6 +48,10 @@ int main(int argc, char *argv[]) {
            name, 'A' + component_type, size);
 
     while (keep_running) {
+        if (!magazyn->is_open) {
+            sleep(1); continue; // Magazyn zamknięty proces czeka
+        }
+
         // Różnicowanie czasu dostawy aby uniknąć zakleszczeń i poprawic process starvation
         // Takie ustawienie czasowe skutkuje tym, że żaden ze składników nie odkłada sie w magazynie
         if (component_type < 2) {
