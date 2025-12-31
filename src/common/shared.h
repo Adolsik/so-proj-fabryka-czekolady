@@ -7,6 +7,9 @@
 #define MAX_COMPONENTS 4 // A, B, C, D
 
 #include <time.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 // Indeksy składników
 enum Component { A = 0, B = 1, C = 2, D = 3 };
@@ -17,6 +20,14 @@ typedef struct {
     int occupied_units; // Aktualnie zajęte jednostki
     int count[MAX_COMPONENTS]; // Liczba sztuk składników A, B, C, D
     int is_open; // Flaga czy magazyn jest otwarty (Polecenie zamknięcia magazynu)
+
+    // Nowe statystyki
+    int supplier_stats[4];  // Ile sztuk dostarczył Dostawca A, B, C, D
+    int worker_stats[2];    // Ile czekolad zrobił Pracownik 1, Pracownik 2
+    
+    // Statusy (0 - Nieaktywny, 1 - Pracuje, 2 - Czeka na miejsce/składniki, 3 - Zatrzymany sygnałem)
+    int supplier_status[4];
+    int worker_status[2];
 } WarehouseState;
 
 // Jednostki zajmowane przez składniki
@@ -37,6 +48,14 @@ static inline void log_event(const char *process_name, const char *message) {
             t->tm_hour, t->tm_min, t->tm_sec, process_name, message);
     
     fclose(f);
+}
+
+// Funkcja pomocnicza do błędów krytycznych
+static inline void check_error(int result, const char *msg) {
+    if (result == -1) {
+        perror(msg);
+        exit(EXIT_FAILURE);
+    }
 }
 
 

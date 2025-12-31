@@ -1,21 +1,19 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <signal.h>
 #include <unistd.h>
-#include <errno.h>
 #include <time.h>
 #include "shared.h"
-#include <errno.h>
+
+WarehouseState *magazyn = NULL;
+
+void cleanup_before_exit();
 
 // Zmienna sterująca pętlą (obsługa sygnałów)
 volatile sig_atomic_t keep_working = 1;
 
-void signal_handler(int sig) {
-    keep_working = 0;
-}
+void signal_handler(int sig);
 
 // Operacje na semaforze (Muteks)
 struct sembuf lock_storage = {0, -1, 0};
@@ -34,11 +32,12 @@ int main(int argc, char *argv[]) {
 
     // Podłączenie do IPC
     int shmid = shmget(KEY_SHM, sizeof(WarehouseState), 0600);
-    if (shmid == -1) { perror("Pracownik shmget"); exit(1); }
-    WarehouseState *magazyn = (WarehouseState *)shmat(shmid, NULL, 0);
+    check_error(shmid, "[Pracownik] Błąd shmget (dostęp do pamięci)");
+    magazyn = (WarehouseState *)shmat(shmid, NULL, 0);
+    check_error((int)(intptr_t)magazyn, "[Pracownik] Błąd shmat (dołączenie pamięci)");
 
     int semid = semget(KEY_SEM, 1, 0600);
-    if (semid == -1) { perror("Pracownik semget"); exit(1); }
+    check_error(semid, "[Pracownik] Błąd semget (dostęp do semafora)");
 
     printf("[Pracownik %d] Rozpoczynam linię produkcyjną typu %d.\n", worker_type, worker_type);
 
@@ -83,24 +82,37 @@ int main(int argc, char *argv[]) {
 
         if (can_produce) {
             magazyn->occupied_units -= total_size_to_free;
-            printf("[Pracownik %d] WYPRODUKOWANO CZEKOLADĘ! Wolne miejsce: %d/%d\n", 
-                   worker_type, magazyn->capacity_N - magazyn->occupied_units, magazyn->capacity_N);
             char buf[100];
+            magazyn->worker_stats[worker_type-1]++; // Zwiększamy licznik wyprodukowanych czekolad
+            magazyn->worker_status[worker_type-1] = 1; // "Produkcja zakończona"
             sprintf(buf, "Wyprodukowano czekolade typu %d. Wolne miejsce: %d", worker_type, magazyn->capacity_N - magazyn->occupied_units);
             log_event((worker_type == 1 ? "Pracownik_1" : "Pracownik_2"), buf);
         } else {
-             printf("[Pracownik %d] Brak surowców. Czekam...\n", worker_type);
+            magazyn->worker_status[worker_type-1] = 2;
         }
-
+             
         // --- WYJŚCIE Z SEKCJI KRYTYCZNEJ ---
         semop(semid, &unlock_storage, 1);
         if (semop(semid, &unlock_storage, 1) == -1) {
-            perror("Pracownik: semop unlock");
+            perror("[Pracownik] semop unlock");
             break;
         }
     }
 
-    shmdt(magazyn);
-    printf("[Pracownik %d] Linia produkcyjna zatrzymana.\n", worker_type);
+    cleanup_before_exit();
     return 0;
+}
+
+void signal_handler(int sig) {
+    keep_working = 0;
+    sleep(1);
+    for(int i=0; i<2; i++) {
+        magazyn->worker_status[i] = 3;
+    }
+}
+
+void cleanup_before_exit() {
+    if (magazyn != NULL && magazyn != (void*)-1) {
+        check_error(shmdt(magazyn), "[Pracownik] Błąd shmdt (odłączenie pamięci)");
+    }
 }
