@@ -105,10 +105,6 @@ int main(int argc, char *argv[]) {
 
 void signal_handler(int sig) {
     keep_working = 0;
-    sleep(1);
-    for(int i=0; i<2; i++) {
-        magazyn->worker_status[i] = 3;
-    }
 }
 
 void cleanup_before_exit() {

@@ -47,7 +47,7 @@ int main() {
         printf("[Dyrektor] Pojemność odtworzona z pliku: %d\n", N);
     } else {
         printf("[Dyrektor] Brak zapisanego stanu. Podaj pojemność magazynu N: ");
-        if (scanf("%d", &N) != 1 || N < 20) {
+        if (scanf("%d", &N) != 1 || N < 5) {
             fprintf(stderr, "Błąd: Nie ma magazynow z taką małą pojemnością.\n");
             exit(EXIT_FAILURE);
         }
@@ -117,6 +117,7 @@ int main() {
                 case 1: // Stop Fabryka (Pracownicy)
                     for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
                     sleep(1); 
+                    for (int i = 0; i < 2; i++) magazyn->worker_status[i] = 3;
                     printf("[Dyrektor] Fabryka przestaje pracować.\n");
                     log_event("DYREKTOR", "Zatrzymano pracę fabryki (Polecenie 1)");
                     break;
@@ -131,11 +132,15 @@ int main() {
                 case 3: // Stop Dostawcy
                     for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR2);
                     sleep(1); 
+                    for (int i = 0; i < 4; i++) magazyn->supplier_status[i] = 3;
                     printf("[Dyrektor] Dostawcy przestają dostarczać składniki.\n");
                     log_event("DYREKTOR", "Zatrzymano dostawców (Polecenie 3)");
                     break;
                 case 4: // Stop Fabryka, Magazyn
-                    for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
+                    for(int i=0; i<2; i++){
+                        kill(factory.workers[i], SIGUSR1);
+                        magazyn->worker_status[i] = 3;
+                    } 
                     magazyn->is_open = 0;
                     semctl(semid, 0, SETVAL, 0);
                     check_error(semctl(semid, 0, SETVAL, 0), "Błąd semctl (ustawianie wartosci semafora na 0)");
@@ -145,8 +150,11 @@ int main() {
                     break;
                 case 5: // Wyjście
                     for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
+                    sleep(1);
+                    for (int i=0; i<2; i++) magazyn->worker_status[i] = 0;
                     for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR2);
-                    sleep(1); 
+                    sleep(1);
+                    for (int i=0; i<4; i++) magazyn->supplier_status[i] = 0;
                     save_state(magazyn);
                     log_event("DYREKTOR", "Zapisano stan magazynu i zakończono działanie programu");
                     break;
@@ -196,32 +204,32 @@ void load_state(WarehouseState *state) {
 }
 
 void print_dashboard(WarehouseState *mag) {
-    printf("\033[H\033[J"); 
-    printf("====================================================\n");
-    printf("        MONITOR FABRYKI CZEKOLADY      \n");
-    printf("====================================================\n");
+    printf("\033[H\033[J"); // Czyszczenie ekranu terminala
+    printf("=====================================================================\n");
+    printf("MONITOR FABRYKI CZEKOLADY\n");
+    printf("=====================================================================\n");
     printf(" MAGAZYN: %d/%d [%s]\n", mag->occupied_units, mag->capacity_N, 
            mag->is_open ? "OTWARTY" : "ZABLOKOWANY");
     
-    printf("----------------------------------------------------\n");
+    printf("---------------------------------------------------------------------\n");
     printf(" DOSTAWCY (Składniki):\n");
     for(int i=0; i<4; i++) {
         char *st = (mag->supplier_status[i] == 1) ? "Dostarcza" : 
                    (mag->supplier_status[i] == 2) ? "OCZEKUJE " : "STOP     ";
         printf(" [%c] Dostarczono: %3d szt. | Status: %s |", 'A'+i, mag->supplier_stats[i], st);
         // Mały pasek zapasów tego typu
-        for(int j=0; j<mag->count[i]; j++) printf("#");
+        printf(" W magazynie: %d szt.", mag->count[i]);
         printf("\n");
     }
 
-    printf("----------------------------------------------------\n");
+    printf("---------------------------------------------------------------------\n");
     printf(" PRACOWNICY (Produkcja):\n");
     for(int i=0; i<2; i++) {
         char *st = (mag->worker_status[i] == 1) ? "Produkuje" : 
                    (mag->worker_status[i] == 2) ? "BRAK SKŁ." : "STOP     ";
         printf(" [%d] Wyprodukowano: %3d czek. | Status: %s\n", i+1, mag->worker_stats[i], st);
     }
-    printf("====================================================\n");
+    printf("=====================================================================\n");
     printf(" 1: Stop Fabryka | 2:  Stop Magazyn | 3: Stop Dostawcy\n");
     printf(" 4: Stop Fabryka i Magazyn | 5: Zakończ i zapisz stan\n");
     printf(" Wybór: ");
