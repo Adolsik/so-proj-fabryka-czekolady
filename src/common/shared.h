@@ -33,6 +33,16 @@ typedef struct {
 // Jednostki zajmowane przez składniki
 static const int component_size[] = {1, 1, 2, 3}; // A=1, B=1, C=2, D=3
 
+
+/**
+ * @brief Zapisuje zdarzenie systemowe do pliku tekstowego z oznaczeniem czasu.
+ * * Funkcja otwiera plik raportu w trybie dopisywania ("a"), pobiera aktualny czas
+ * systemowy i formatuje wpis tak, aby zawierał dokładną godzinę oraz nazwę procesu,
+ * który wywołał zdarzenie. Zapewnia to pełną historię operacji fabryki w celach diagnostycznych.
+ * * @param process_name Nazwa procesu generującego wpis (np. "Dyrektor", "Dostawca_A").
+ * @param message Treść komunikatu opisującego zdarzenie.
+ * @return void
+ */
 static inline void log_event(const char *process_name, const char *message) {
     FILE *f = fopen("fabryka_raport.txt", "a");
     if (f == NULL) {
@@ -50,13 +60,21 @@ static inline void log_event(const char *process_name, const char *message) {
     fclose(f);
 }
 
-// Funkcja pomocnicza do błędów krytycznych
+/**
+ * @brief Sprawdza wynik operacji systemowej i przerywa program w przypadku błędu.
+ * * Funkcja służy do centralnej obsługi błędów funkcji systemowych (np. shmget, semop).
+ * Jeśli parametr 'result' wynosi -1, funkcja wypisuje opis błędu przy użyciu perror()
+ * i natychmiast kończy działanie programu z kodem EXIT_FAILURE, zapobiegając
+ * niestabilnemu działaniu procesów potomnych.
+ * * @param result Wynik sprawdzanej funkcji systemowej (zazwyczaj int lub pid_t).
+ * @param msg Komunikat opisujący kontekst błędu, który zostanie wyświetlony w terminalu.
+ * @return void
+ */
 static inline void check_error(int result, const char *msg) {
     if (result == -1) {
         perror(msg);
         exit(EXIT_FAILURE);
     }
 }
-
 
 #endif 

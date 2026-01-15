@@ -18,16 +18,12 @@ typedef struct {
     pid_t workers[2];
 } FactoryPIDs;
 
-// Funkcja czyszcząca zasoby IPC
 void cleanup(int shmid, int semid, int msqid);
 
-// Zapisywanie stanu magazynu
 void save_state(WarehouseState *state);
 
-// Wczytywanie stanu magazynu
 void load_state(WarehouseState *state);
 
-// Interfejs
 void print_dashboard(WarehouseState *mag);
  
 int main() {
@@ -169,6 +165,18 @@ int main() {
     return 0;
 }
 
+/**
+ * @brief Usuwa zasoby komunikacji międzyprocesowej (IPC) z systemu.
+ * * Funkcja odpowiada za zwolnienie segmentów pamięci współdzielonej, zestawów 
+ * semaforów oraz kolejek komunikatów. Wykorzystuje polecenia IPC_RMID, aby 
+ * zasoby nie pozostawały w systemie po zakończeniu pracy programu. Zawiera 
+ * mechanizm ignorowania błędu EINVAL na wypadek, gdyby zasób został już 
+ * usunięty przez inny proces.
+ * * @param shmid Identyfikator pamięci współdzielonej.
+ * @param semid Identyfikator zestawu semaforów.
+ * @param msqid Identyfikator kolejki komunikatów.
+ * @return void
+ */
 void cleanup(int shmid, int semid, int msqid) {
     shmctl(shmid, IPC_RMID, NULL);
     if (shmctl(shmid, IPC_RMID, NULL) == -1 && errno != EINVAL) perror("Błąd cleanup(): shmctl");
@@ -179,6 +187,14 @@ void cleanup(int shmid, int semid, int msqid) {
     printf("\n[Dyrektor] Zasoby IPC usunięte z systemu.\n");
 }
 
+/**
+ * @brief Zapisuje aktualny stan struktur magazynowych do pliku binarnego.
+ * * Funkcja wykonuje zrzut całej struktury WarehouseState do pliku o nazwie 
+ * zdefiniowanej w STATE_FILE. Wykorzystuje tryb zapisu binarnego ("wb"), co 
+ * pozwala na zachowanie spójności danych przy ponownym uruchomieniu fabryki.
+ * * @param state Wskaźnik do struktury pamięci współdzielonej, która ma zostać zapisana.
+ * @return void
+ */
 void save_state(WarehouseState *state) {
     FILE *f = fopen(STATE_FILE, "wb");
     if (f == NULL) {
@@ -191,6 +207,14 @@ void save_state(WarehouseState *state) {
     }
 }
 
+/**
+ * @brief Odczytuje stan magazynu z pliku binarnego przy starcie programu.
+ * * Funkcja próbuje otworzyć plik stanu i wczytać zapisaną wcześniej strukturę 
+ * WarehouseState bezpośrednio do pamięci współdzielonej. Umożliwia to 
+ * kontynuację pracy fabryki z zachowaniem poprzednich statystyk i zapasów.
+ * * @param state Wskaźnik do struktury pamięci współdzielonej, do której trafią dane.
+ * @return void
+ */
 void load_state(WarehouseState *state) {
     FILE *f = fopen(STATE_FILE, "rb");
     if (f == NULL) {
@@ -203,6 +227,15 @@ void load_state(WarehouseState *state) {
     }
 }
 
+/**
+ * @brief Wyświetla interaktywny panel monitorowania fabryki w terminalu.
+ * * Funkcja generuje czytelny dashboard TUI, który w czasie rzeczywistym 
+ * prezentuje stopień zapełnienia magazynu, statusy poszczególnych dostawców 
+ * i pracowników oraz statystyki produkcji. Wykorzystuje sekwencje sterujące 
+ * ANSI do odświeżania widoku bez przewijania ekranu (efekt dashboardu).
+ * * @param mag Wskaźnik do pamięci współdzielonej zawierającej aktualne dane fabryki.
+ * @return void
+ */
 void print_dashboard(WarehouseState *mag) {
     printf("\033[H\033[J"); // Czyszczenie ekranu terminala
     printf("=====================================================================\n");

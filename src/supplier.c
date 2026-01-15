@@ -7,18 +7,22 @@
 #include "shared.h"
 
 WarehouseState *magazyn = NULL;
+volatile sig_atomic_t keep_running = 1;
 
 void cleanup_before_exit();
 
-// Zmienna sygnalizująca koniec pracy
-volatile sig_atomic_t keep_running = 1;
-
-// Obsługa sygnałów od Dyrektora
 void signal_handler(int sig);
 
-// Struktury dla operacji na semaforach (zdefiniowane globalnie dla wygody)
-struct sembuf lock_storage = {0, -1, 0}; // P: Czekaj/Zablokuj
-struct sembuf unlock_storage = {0, 1, 0}; // V: Zwolnij
+/**
+ * @brief Definicje operacji na semaforze (P i V).
+ * * lock_storage: Operacja 'P' (proszę). Zmniejsza wartość semafora o 1. 
+ * Jeśli semafor wynosi 0, proces zostaje wstrzymany (blokada sekcji krytycznej).
+ * unlock_storage: Operacja 'V' (wolne). Zwiększa wartość semafora o 1. 
+ * Budzi procesy oczekujące na dostęp do zasobu.
+ */
+struct sembuf lock_storage = {0, -1, 0}; // sem_num,sem_op,sem_flg
+struct sembuf unlock_storage = {0, 1, 0}; 
+
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
@@ -78,7 +82,9 @@ int main(int argc, char *argv[]) {
             sprintf(buf, "Dostarczono skladnik %c. Stan: %d/%d", 'A' + component_type, magazyn->occupied_units, magazyn->capacity_N);
             log_event(name, buf);
         } else {
-            printf("[%s] Magazyn pełny! Oczekiwanie...\n", name);
+            char buf[100];
+            sprintf(buf, "[%s] Magazyn pełny! Oczekiwanie...\n", name);
+            log_event(name, buf);
         }
 
         // --- WYJŚCIE Z SEKCJI KRYTYCZNEJ ---
@@ -95,10 +101,28 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+/**
+ * @brief Obsługuje sygnały systemowe w celu kontrolowanego zatrzymania pętli procesu.
+ * * Funkcja zmienia wartość flagi sterującej 'keep_running' na 0 po odebraniu sygnału 
+ * (np. SIGUSR1 lub SIGUSR2). Pozwala to procesowi na bezpieczne dokończenie 
+ * aktualnej iteracji, zwolnienie semaforów i poprawne zamknięcie zasobów 
+ * zamiast nagłego przerwania działania przez system.
+ * * @param sig Numer odebranego sygnału (przekazywany automatycznie przez jądro systemu).
+ * @return void
+ */
 void signal_handler(int sig) {
     keep_running = 0;
 }
 
+/**
+ * @brief Odłącza segment pamięci współdzielonej od przestrzeni adresowej procesu.
+ * * Funkcja jest wywoływana przed zakończeniem działania procesu potomnego. 
+ * Sprawdza poprawność wskaźnika 'magazyn', a następnie używa shmdt(), aby 
+ * poinformować jądro systemu, że proces nie będzie już korzystał z danego 
+ * segmentu. Jest to kluczowy element zapobiegania wyciekom pamięci i błędnym 
+ * odwołaniom przy zamykaniu fabryki.
+ * * @return void
+ */
 void cleanup_before_exit() {
     if (magazyn != NULL && magazyn != (void*)-1) {
         check_error(shmdt(magazyn), "[Dostawca] Błąd shmdt (odłączenie pamięci)");
