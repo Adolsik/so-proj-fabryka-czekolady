@@ -1,9 +1,15 @@
 #ifndef SHARED_H
 #define SHARED_H
 
+#define CLR_RESET  "\x1b[0m"
+#define CLR_RED    "\x1b[31m"
+#define CLR_GREEN  "\x1b[32m"
+#define CLR_YELLOW "\x1b[33m"
+#define CLR_MAGENTA "\x1b[35m"
+#define CLR_BOLD   "\x1b[1m"
+
 #define KEY_SHM 1234
 #define KEY_SEM 5678
-#define KEY_MSG 9012
 #define MAX_COMPONENTS 4 // A, B, C, D
 
 #include <time.h>
@@ -18,6 +24,7 @@ enum Component { A = 0, B = 1, C = 2, D = 3 };
 typedef struct {
     int capacity_N; // Całkowita pojemność N
     int occupied_units; // Aktualnie zajęte jednostki
+    int max_per_type[MAX_COMPONENTS]; // Maksymalna liczba sztuk każdego składnika
     int count[MAX_COMPONENTS]; // Liczba sztuk składników A, B, C, D
     int is_open; // Flaga czy magazyn jest otwarty (Polecenie zamknięcia magazynu)
 

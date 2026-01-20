@@ -59,12 +59,10 @@ int main(int argc, char *argv[]) {
         // Różnicowanie czasu dostawy aby uniknąć zakleszczeń i poprawic process starvation
         // Takie ustawienie czasowe skutkuje tym, że żaden ze składników nie odkłada sie w magazynie
         if (component_type < 2) {
-            usleep(750000 + (rand() % 1000000)); // Dostawy A, B co 0.75-1.5s
+            usleep(750000 + (rand() % 750000)); // Dostawy A, B co 0.75-1.5s
         } else {
-            sleep(2 + (rand() % 2));              // Dostawy C, D co 2-3 sekundy
+            usleep(1500000 + (rand() % 750000)); // Dostawy C, D co 1.5-2.25 sekundy
         }
-
-        magazyn->supplier_status[component_type] = 2; 
 
         // --- WEJŚCIE DO SEKCJI KRYTYCZNEJ ---
         if (semop(semid, &lock_storage, 1) == -1) {
@@ -72,16 +70,27 @@ int main(int argc, char *argv[]) {
             perror("[Dostawca] semop lock error"); break;
         }
 
+        //  Blokada konfliktu C+D dla N < 7
+        int conflict = 0;
+        if (magazyn->capacity_N < 7) {
+            // Jeśli jestem C (typ 2), nie wchodzę gdy jest już D (typ 3)
+            if (component_type == 2 && magazyn->count[3] > 0) conflict = 1;
+            // Jeśli jestem D (typ 3), nie wchodzę gdy jest już C (typ 2)
+            if (component_type == 3 && magazyn->count[2] > 0) conflict = 1;
+        }
+
         // Sprawdzenie miejsca w magazynie
-        if (magazyn->occupied_units + size <= magazyn->capacity_N) {
-            magazyn->occupied_units += size;
+        if (magazyn->count[component_type] < magazyn->max_per_type[component_type] && !conflict) {
+            // Dostarczamy składnik
             magazyn->count[component_type]++;
-            magazyn->supplier_stats[component_type]++; 
+            magazyn->occupied_units += size; 
+            magazyn->supplier_stats[component_type]++;
             magazyn->supplier_status[component_type] = 1; 
             char buf[100];
             sprintf(buf, "Dostarczono skladnik %c. Stan: %d/%d", 'A' + component_type, magazyn->occupied_units, magazyn->capacity_N);
             log_event(name, buf);
         } else {
+            magazyn->supplier_status[component_type] = 2;
             char buf[100];
             sprintf(buf, "[%s] Magazyn pełny! Oczekiwanie...\n", name);
             log_event(name, buf);

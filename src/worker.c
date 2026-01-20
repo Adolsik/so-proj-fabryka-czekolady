@@ -57,9 +57,9 @@ int main(int argc, char *argv[]) {
             sleep(1); continue; // Magazyn zamknięty proces czeka
         }
 
-        // Czekaj od 1 do 3 sekund losowo przed każdą próbą (process starvation)
+        // Czekaj od 1 do 2 sekund losowo przed każdą próbą (process starvation)
         sleep(1);
-        usleep((rand() % 2000) * 1000);
+        usleep((rand() % 1000) * 1000);
 
         // --- WEJŚCIE DO SEKCJI KRYTYCZNEJ (dostęp atomowy) ---
         if (semop(semid, &lock_storage, 1) == -1) {
