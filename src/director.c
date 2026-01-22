@@ -86,8 +86,8 @@ int main() {
     semid = semget(key_sem, 1, IPC_CREAT | 0600);
     check_error(semid, "[Dyrektor] Błąd semget (tworzenie semafora)");
 
-    semctl(semid, 0, SETVAL, 1);
-    check_error(semctl(semid, 0, SETVAL, 1), "[Dyrektor] Błąd semctl (ustawianie wartosci semafora)");
+    int result = semctl(semid, 0, SETVAL, 1);
+    check_error(result, "[Dyrektor] Błąd semctl (ustawianie wartosci semafora)");
 
     // Uruchamianie 4 Dostawców
     for (int i = 0; i < 4; i++) {
@@ -244,7 +244,6 @@ void cleanup(int shmid, int semid) {
     if (semctl(semid, 0, IPC_RMID) == -1 && errno != EINVAL) perror("Błąd cleanup(): semctl");
     printf("\n[Dyrektor] Zasoby IPC usunięte z systemu.\n");
 }
-#include <signal.h> // Musisz dodać ten nagłówek
 
 /**
  * @brief Obsługuje sygnał SIGINT (Ctrl+C) w celu bezpiecznego zamknięcia programu.

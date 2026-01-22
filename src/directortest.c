@@ -272,7 +272,6 @@ void cleanup(int shmid, int semid) {
     if (semctl(semid, 0, IPC_RMID) == -1 && errno != EINVAL) perror("Błąd cleanup(): semctl");
     printf("\n[Dyrektor] Zasoby IPC usunięte z systemu.\n");
 }
-#include <signal.h> // Musisz dodać ten nagłówek
 
 /**
  * @brief Obsługuje sygnał SIGINT (Ctrl+C) w celu bezpiecznego zamknięcia programu.
