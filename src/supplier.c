@@ -23,12 +23,13 @@ void signal_handler(int sig);
 struct sembuf lock_storage = {0, -1, 0}; // sem_num,sem_op,sem_flg
 struct sembuf unlock_storage = {0, 1, 0}; 
 
-
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Błąd: Brak argumentów (typ i nazwa).\n");
         exit(EXIT_FAILURE);
     }
+
+    srand(time(NULL) ^ getpid()); // Inicjalizacja losowości dostaw
 
     int component_type = atoi(argv[1]); // 0=A, 1=B, 2=C, 3=D
     char *name = argv[2];
@@ -38,36 +39,41 @@ int main(int argc, char *argv[]) {
     signal(SIGUSR2, signal_handler); // Polecenie Stop Dostawca
 
     // Podłączenie do IPC (Pamięć i Semafory)
-    int shmid = shmget(KEY_SHM, sizeof(WarehouseState), 0600);
+    key_t key_shm = get_shm_key(FTOK_PATH, SHM_ID);
+    int shmid = shmget(key_shm, sizeof(WarehouseState), 0600);
     check_error(shmid, "[Dostawca] Błąd shmget (dostęp do pamięci)");
 
     magazyn = (WarehouseState *)shmat(shmid, NULL, 0);
     check_error((int)(intptr_t)magazyn, "[Dostawca] Błąd shmat (dołączenie pamięci)");
 
-    int semid = semget(KEY_SEM, 1, 0600);
+    key_t key_sem = get_sem_key(FTOK_PATH, SEM_ID);
+    int semid = semget(key_sem, 1, 0600);
     check_error(semid, "[Dostawca] Błąd semget (dostęp do semafora)");
-
-    srand(time(NULL) ^ getpid()); // Inicjalizacja losowości dostaw
 
     printf("[%s] Rozpoczynam pracę. Dostarczam składnik %c (rozmiar %d)\n", 
            name, 'A' + component_type, size);
 
     while (keep_running) {
-        if (!magazyn->is_open) {
-            sleep(1); continue; // Magazyn zamknięty proces czeka
-        }
         // Różnicowanie czasu dostawy aby uniknąć zakleszczeń i poprawic process starvation
         // Takie ustawienie czasowe skutkuje tym, że żaden ze składników nie odkłada sie w magazynie
         if (component_type < 2) {
-            usleep(750000 + (rand() % 750000)); // Dostawy A, B co 0.75-1.5s
+            usleep(750000 + (rand() % 250000)); // Dostawy A, B co 0.75-1.0s
         } else {
-            usleep(1500000 + (rand() % 750000)); // Dostawy C, D co 1.5-2.25 sekundy
+            usleep(1000000 + (rand() % 750000)); // Dostawy C, D co 1.0-1.75 sekundy
         }
 
         // --- WEJŚCIE DO SEKCJI KRYTYCZNEJ ---
         if (semop(semid, &lock_storage, 1) == -1) {
             if (errno == EINTR) continue; // Przerwano sygnałem, sprawdź warunek pętli
             perror("[Dostawca] semop lock error"); break;
+        }
+
+         if (!magazyn->is_open) {
+            if (semop(semid, &unlock_storage, 1) == -1) {
+                perror("[Dostawca] semop unlock error");
+                 break;
+            }       
+            continue;
         }
 
         //  Blokada konfliktu C+D dla N < 7
@@ -80,7 +86,7 @@ int main(int argc, char *argv[]) {
         }
 
         // Sprawdzenie miejsca w magazynie
-        if (magazyn->count[component_type] < magazyn->max_per_type[component_type] && !conflict) {
+        if (magazyn->count[component_type] < magazyn->max_per_type[component_type] && magazyn->occupied_units + size <= magazyn->capacity_N && !conflict) {
             // Dostarczamy składnik
             magazyn->count[component_type]++;
             magazyn->occupied_units += size; 
@@ -92,16 +98,15 @@ int main(int argc, char *argv[]) {
         } else {
             magazyn->supplier_status[component_type] = 2;
             char buf[100];
-            sprintf(buf, "[%s] Magazyn pełny! Oczekiwanie...\n", name);
+            sprintf(buf, "Magazyn pełny! Oczekiwanie...\n");
             log_event(name, buf);
         }
 
         // --- WYJŚCIE Z SEKCJI KRYTYCZNEJ ---
-        semop(semid, &unlock_storage, 1);
         if (semop(semid, &unlock_storage, 1) == -1) {
             perror("[Dostawca] semop unlock error");
-        break;
-    }
+             break;
+        }       
     }
 
     // Odłączenie od pamięci dzielonej przed końcem

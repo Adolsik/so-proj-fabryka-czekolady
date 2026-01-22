@@ -36,26 +36,27 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    srand(time(NULL) ^ getpid()); // Inicjalizacja losowości
+
     int worker_type = atoi(argv[1]); // 1 lub 2
     
     // Rejestracja sygnałów Polecenie stop Pracownik
     signal(SIGUSR1, signal_handler);
 
     // Podłączenie do IPC
-    int shmid = shmget(KEY_SHM, sizeof(WarehouseState), 0600);
+    key_t key_shm = get_shm_key(FTOK_PATH, SHM_ID);
+    int shmid = shmget(key_shm, sizeof(WarehouseState), 0600);
     check_error(shmid, "[Pracownik] Błąd shmget (dostęp do pamięci)");
     magazyn = (WarehouseState *)shmat(shmid, NULL, 0);
     check_error((int)(intptr_t)magazyn, "[Pracownik] Błąd shmat (dołączenie pamięci)");
 
-    int semid = semget(KEY_SEM, 1, 0600);
+    key_t key_sem = get_sem_key(FTOK_PATH, SEM_ID);
+    int semid = semget(key_sem, 1, 0600);
     check_error(semid, "[Pracownik] Błąd semget (dostęp do semafora)");
 
     printf("[Pracownik %d] Rozpoczynam linię produkcyjną typu %d.\n", worker_type, worker_type);
 
     while (keep_working) {
-         if (!magazyn->is_open) {
-            sleep(1); continue; // Magazyn zamknięty proces czeka
-        }
 
         // Czekaj od 1 do 2 sekund losowo przed każdą próbą (process starvation)
         sleep(1);
@@ -65,6 +66,14 @@ int main(int argc, char *argv[]) {
         if (semop(semid, &lock_storage, 1) == -1) {
             if (errno == EINTR) continue;
             perror("[Pracownik] semop lock error"); break;
+        }
+
+        if (!magazyn->is_open) {
+            if (semop(semid, &unlock_storage, 1) == -1) {
+                perror("[Dostawca] semop unlock error");
+                 break;
+            }       
+            continue;
         }
 
         int can_produce = 0;
@@ -100,10 +109,12 @@ int main(int argc, char *argv[]) {
             log_event((worker_type == 1 ? "Pracownik_1" : "Pracownik_2"), buf);
         } else {
             magazyn->worker_status[worker_type-1] = 2;
+            char buf[100];
+            sprintf(buf, "Brak składników! Oczekiwanie...\n");
+            log_event((worker_type == 1 ? "Pracownik_1" : "Pracownik_2"), buf);
         }
              
         // --- WYJŚCIE Z SEKCJI KRYTYCZNEJ ---
-        semop(semid, &unlock_storage, 1);
         if (semop(semid, &unlock_storage, 1) == -1) {
             perror("[Pracownik] semop unlock");
             break;

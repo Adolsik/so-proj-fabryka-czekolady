@@ -1,6 +1,12 @@
 #ifndef SHARED_H
 #define SHARED_H
 
+#include <time.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ipc.h>
+
 #define CLR_RESET  "\x1b[0m"
 #define CLR_RED    "\x1b[31m"
 #define CLR_GREEN  "\x1b[32m"
@@ -8,14 +14,12 @@
 #define CLR_MAGENTA "\x1b[35m"
 #define CLR_BOLD   "\x1b[1m"
 
-#define KEY_SHM 1234
-#define KEY_SEM 5678
-#define MAX_COMPONENTS 4 // A, B, C, D
+#define FTOK_PATH "./common/shared.h"
+#define SHM_ID 'X' 
+#define SEM_ID 'Y' 
 
-#include <time.h>
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
+
+#define MAX_COMPONENTS 4 // A, B, C, D
 
 // Indeksy składników
 enum Component { A = 0, B = 1, C = 2, D = 3 };
@@ -82,6 +86,38 @@ static inline void check_error(int result, const char *msg) {
         perror(msg);
         exit(EXIT_FAILURE);
     }
+}
+
+/**
+ * @brief Generuje unikalny klucz IPC dla pamięci współdzielonej.
+ * * Funkcja wykorzystuje systemowe wywołanie ftok(), bazując na stałej ścieżce 
+ * FTOK_PATH oraz unikalnym identyfikatorze projektu SHM_ID. Klucz ten 
+ * jest niezbędny do poprawnej komunikacji między procesem Dyrektora 
+ * a procesami potomnymi (Dostawcy, Pracownicy) w obrębie tego samego segmentu.
+ * * @note Plik zdefiniowany w FTOK_PATH musi istnieć w systemie plików.
+ * @return key_t Wygenerowany unikalny klucz dla pamięci współdzielonej.
+ * @retval exit(EXIT_FAILURE) Kończy działanie programu w przypadku błędu generowania klucza (perror).
+ */
+static inline key_t get_shm_key() {
+    key_t k = ftok(FTOK_PATH, SHM_ID);
+    check_error(k, "ftok shm");
+    return k;
+}
+
+/**
+ * @brief Generuje unikalny klucz IPC dla zestawu semaforów.
+ * * Funkcja tworzy klucz identyfikujący zasoby semaforów w systemie. 
+ * Wykorzystuje tę samą ścieżkę co get_shm_key(), ale inny identyfikator (SEM_ID), 
+ * co pozwala systemowi operacyjnemu rozróżnić te dwa typy zasobów IPC 
+ * w tablicy kluczy.
+ * * @see get_shm_key()
+ * @return key_t Wygenerowany unikalny klucz dla zestawu semaforów.
+ * @retval exit(EXIT_FAILURE) Kończy działanie programu w przypadku niepowodzenia ftok().
+ */
+static inline key_t get_sem_key() {
+    key_t k = ftok(FTOK_PATH, SEM_ID);
+    check_error(k, "ftok sem");
+    return k;
 }
 
 #endif 

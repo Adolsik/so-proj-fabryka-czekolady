@@ -1,4 +1,3 @@
-
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/sem.h>
@@ -16,6 +15,13 @@ typedef struct {
     pid_t suppliers[4];
     pid_t workers[2];
 } FactoryPIDs;
+
+FactoryPIDs factory;
+
+struct sembuf lock_storage = {0, -1, 0}; // sem_num,sem_op,sem_flg
+struct sembuf unlock_storage = {0, 1, 0}; 
+
+WarehouseState *magazyn;
 
 int shmid, semid;
 
@@ -42,10 +48,13 @@ int main() {
     int N;
 
     // Inicjalizacja IPC (Shared Memory, Semaphores)
-    shmid = shmget(KEY_SHM, sizeof(WarehouseState), IPC_CREAT | 0600);
+    key_t key_shm = get_shm_key(FTOK_PATH, SHM_ID);
+    check_error(key_shm, "[Dyrektor] Błąd ftok (tworzenie klucza pamieci wspoldzielonej)");
+
+    shmid = shmget(key_shm, sizeof(WarehouseState), IPC_CREAT | 0600);
     check_error(shmid, "[Dyrektor] Błąd shmget (tworzenie pamieci)");
 
-    WarehouseState *magazyn = (WarehouseState *)shmat(shmid, NULL, 0);
+    magazyn = (WarehouseState *)shmat(shmid, NULL, 0);
     check_error((int)(intptr_t)magazyn, "[Dyrektor] Błąd shmat (dolaczenie pamieci)");
     
     if (access(STATE_FILE, F_OK) == 0) {
@@ -71,13 +80,14 @@ int main() {
     setup_limits(magazyn);
     magazyn->is_open = 1; // Magazyn jest otwarty na start
 
-    semid = semget(KEY_SEM, 1, IPC_CREAT | 0600);
+    key_t key_sem = get_sem_key(FTOK_PATH, SEM_ID);
+    check_error(key_sem, "[Dyrektor] Błąd ftok (tworzenie klucza semafora)");
+
+    semid = semget(key_sem, 1, IPC_CREAT | 0600);
     check_error(semid, "[Dyrektor] Błąd semget (tworzenie semafora)");
 
     semctl(semid, 0, SETVAL, 1);
     check_error(semctl(semid, 0, SETVAL, 1), "[Dyrektor] Błąd semctl (ustawianie wartosci semafora)");
-
-    FactoryPIDs factory;
 
     // Uruchamianie 4 Dostawców
     for (int i = 0; i < 4; i++) {
@@ -88,7 +98,7 @@ int main() {
             sprintf(type, "%d", i);
             sprintf(name, "Dostawca_%c", 'A' + i);
             execl("./supplier", "./supplier", type, name, NULL);
-            check_error(execl("./supplier", "./supplier", type, name, NULL), "[Dyrektor] Błąd execl (uruchamianie dostawcy)");
+            perror("[Dyrektor] Błąd execl");
             exit(1);
         } else {
             factory.suppliers[i] = p;
@@ -103,7 +113,7 @@ int main() {
             char type[2];
             sprintf(type, "%d", i + 1);
             execl("./worker", "./worker", type, NULL);
-            check_error(execl("./worker", "./worker", type, NULL), "[Dyrektor] Błąd execl (uruchamianie pracownika)");
+            perror("[Dyrektor] Błąd execl");
             exit(1);
         } else {
             factory.workers[i] = p;
@@ -128,9 +138,9 @@ int main() {
                     break;
                 case 2: // Stop Magazyn
                     magazyn->is_open = 0;
-                    semctl(semid, 0, SETVAL, 0);
-                    check_error(semctl(semid, 0, SETVAL, 0), "Błąd semctl (ustawianie wartosci semafora na 0)");
                     sleep(1); 
+                    for (int i = 0; i < 2; i++) magazyn->worker_status[i] = 3;
+                    for (int i = 0; i < 4; i++) magazyn->supplier_status[i] = 3;
                     printf("[Dyrektor] Magazyn został zablokowany. Procesy czekają...\n");
                     log_event("DYREKTOR", "Zablokowano dostep do magazynu (Polecenie 2)");
                     break;
@@ -230,9 +240,7 @@ void setup_limits(WarehouseState *mag) {
  * @return void
  */
 void cleanup(int shmid, int semid) {
-    shmctl(shmid, IPC_RMID, NULL);
     if (shmctl(shmid, IPC_RMID, NULL) == -1 && errno != EINVAL) perror("Błąd cleanup(): shmctl");
-    semctl(semid, 0, IPC_RMID);
     if (semctl(semid, 0, IPC_RMID) == -1 && errno != EINVAL) perror("Błąd cleanup(): semctl");
     printf("\n[Dyrektor] Zasoby IPC usunięte z systemu.\n");
 }
@@ -246,6 +254,11 @@ void cleanup(int shmid, int semid) {
  * * @param sig Numer otrzymanego sygnału.
  */
 void handle_sigint(int sig) {
+    for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR2);
+    for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
+    save_state(magazyn);
+    sleep(1);
+
     cleanup(shmid, semid);
     exit(0); 
 }
@@ -300,6 +313,10 @@ void load_state(WarehouseState *state) {
  * @return void
  */
 void print_dashboard(WarehouseState *mag) {
+
+    if (semop(semid, &lock_storage, 1) == -1) {
+        perror("[Dyrektor] semop lock error"); 
+    }
     printf("\033[H\033[J"); // Czyszczenie ekranu terminala
     printf("=====================================================================\n");
     printf(CLR_BOLD CLR_MAGENTA " MONITOR FABRYKI CZEKOLADY\n" CLR_RESET CLR_RESET);
@@ -312,7 +329,7 @@ void print_dashboard(WarehouseState *mag) {
     for(int i=0; i<4; i++) {
         char *st = (mag->supplier_status[i] == 1) ? CLR_GREEN "Dostarcza" CLR_RESET : 
                    (mag->supplier_status[i] == 2) ? CLR_YELLOW "OCZEKUJE " CLR_RESET : CLR_RED "STOP" CLR_RESET;
-        printf(" [%c] Dostarczono: %3d szt. | Status: %s |", 'A'+i, mag->supplier_stats[i], st);
+        printf("[PID: %d] [%c] Dostarczono: %3d szt. | Status: %s |",factory.suppliers[i], 'A'+i, mag->supplier_stats[i], st);
         float percent = (float)mag->count[i] / mag->max_per_type[i] * 100;
         printf(" Pojemność: [");
         for(int i=0; i<20; i++) {
@@ -328,11 +345,15 @@ void print_dashboard(WarehouseState *mag) {
     for(int i=0; i<2; i++) {
         char *st = (mag->worker_status[i] == 1) ? CLR_GREEN "Produkuje" CLR_RESET : 
                    (mag->worker_status[i] == 2) ? CLR_YELLOW "BRAK SKŁ." CLR_RESET : CLR_RED "STOP" CLR_RESET;
-        printf(" [%d] Wyprodukowano: %3d czek. | Status: %s\n", i+1, mag->worker_stats[i], st);
+        printf("[PID: %d] [%d] Wyprodukowano: %3d czek. | Status: %s\n", factory.workers[i], i+1, mag->worker_stats[i], st);
     }
     printf("=====================================================================\n");
     printf(" 1: Stop Fabryka | 2:  Stop Magazyn | 3: Stop Dostawcy\n");
     printf(" 4: Stop Fabryka i Magazyn | 5: Zakończ i zapisz stan\n");
     printf(" Wybór: ");
     fflush(stdout);
+
+     if (semop(semid, &unlock_storage, 1) == -1) {
+         perror("[Dyrektor] semop unlock error");
+    }    
 }
