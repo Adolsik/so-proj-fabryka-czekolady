@@ -282,8 +282,10 @@ void cleanup(int shmid, int semid) {
  * * @param sig Numer otrzymanego sygnału.
  */
 void handle_sigint(int sig) {
-    for(int i=0; i<4; i++) kill(factory.suppliers[i], SIGUSR2);
-    for(int i=0; i<2; i++) kill(factory.workers[i], SIGUSR1);
+    int count_suppliers = sA + sB + sC + sD;
+    int count_workers = w1 + w2;
+    for(int i=0; i<count_suppliers; i++) kill(factory.suppliers[i], SIGUSR2);
+    for(int i=0; i<count_workers; i++) kill(factory.workers[i], SIGUSR1);
     save_state(magazyn);
     sleep(1);
 
